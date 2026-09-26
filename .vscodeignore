@@ -1,4 +1,7 @@
 .vscode/**
+.git/**
+.kilo/**
+*.vsix
 .vscode-test/**
 src/**
 node_modules/**
