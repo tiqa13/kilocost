@@ -1,0 +1,87 @@
+{
+  "name": "kilocost",
+  "displayName": "KiloCost",
+  "description": "Total token cost per project for Kilo Code sessions, straight from the local session database.",
+  "version": "0.1.0",
+  "publisher": "unsloth-hub",
+  "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/unsloth-hub/kilocost.git"
+  },
+  "engines": {
+    "vscode": "^1.138.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "kilo",
+    "kilo code",
+    "cost",
+    "tokens",
+    "usage"
+  ],
+  "icon": "images/icon.png",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "kilocost.showPanel",
+        "title": "Open Breakdown Panel",
+        "category": "KiloCost"
+      },
+      {
+        "command": "kilocost.refresh",
+        "title": "Refresh Costs",
+        "category": "KiloCost"
+      },
+      {
+        "command": "kilocost.toggleHidden",
+        "title": "Toggle Hidden",
+        "category": "KiloCost"
+      },
+      {
+        "command": "kilocost.debugInfo",
+        "title": "Debug Info",
+        "category": "KiloCost"
+      }
+    ],
+    "configuration": {
+      "title": "KiloCost",
+      "properties": {
+        "kilocost.currency": {
+          "type": "string",
+          "default": "USD",
+          "description": "Currency to display costs in. Non-USD amounts are converted with live ECB reference rates (cached daily)."
+        },
+        "kilocost.fetchRates": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow fetching ECB exchange rates. When false, costs always display in USD."
+        },
+        "kilocost.databasePath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path override for kilo.db. Empty uses $HOME/.local/share/kilo/kilo.db."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "esbuild src/extension.ts --bundle --external:vscode --external:node:sqlite --platform=node --format=cjs --sourcemap --outfile=dist/extension.js",
+    "watch": "npm run compile -- --watch",
+    "check-types": "tsc --noEmit",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.138.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.5.0"
+  }
+}
