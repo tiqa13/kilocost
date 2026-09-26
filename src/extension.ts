@@ -1,12 +1,18 @@
 ﻿import * as vscode from "vscode";
 import { KiloDb, ModelSum, OpenResult, openDb, configuredDbPath } from "./db.js";
 import { DbWatcher } from "./refresh.js";
+import { Panel, PanelData, RootData } from "./panel.js";
+import { ensureRates } from "./rates.js";
+import { getDisplay, setDisplay } from "./format.js";
 import { Snapshot, StatusBar } from "./status.js";
 
+let ctxRef: vscode.ExtensionContext | null = null;
 let db: KiloDb | null = null;
 let watcher: DbWatcher | null = null;
 let bar: StatusBar | null = null;
 let output: vscode.OutputChannel | null = null;
+let lastData: PanelData | null = null;
+const SESSION_ROW_LIMIT = 200;
 
 function ensureOutput(): vscode.OutputChannel {
   if (!output) output = vscode.window.createOutputChannel("KiloCost");
@@ -32,16 +38,19 @@ function mergeModels(target: Map<string, ModelSum>, additions: ModelSum[]): void
   }
 }
 
-function refresh(): void {
-  if (!bar) return;
+async function refresh(force: boolean): Promise<void> {
+  if (!bar || !ctxRef) return;
   const previous = db;
   const result: OpenResult = openDb();
   previous?.dispose();
   db = null;
   restartWatcher();
 
+  const display = await ensureRates(ctxRef, force);
+  setDisplay(display.currency, display.usdToDisplay, display.note);
+
   if (result.state === "missing" || result.state === "locked") {
-    bar.show({
+    setSnapshot({
       state: result.state,
       dbPath: result.dbPath,
       detail: result.detail,
@@ -52,7 +61,7 @@ function refresh(): void {
     return;
   }
   if (result.state === "drift") {
-    bar.show({
+    setSnapshot({
       state: "drift",
       dbPath: result.dbPath,
       appVersion: result.appVersion,
@@ -69,39 +78,68 @@ function refresh(): void {
   let total = 0;
   let sessions = 0;
   const models = new Map<string, ModelSum>();
+  const roots: RootData[] = [];
   for (const root of folderRoots()) {
     const t = opened.total(root);
     total += t.cost;
     sessions += t.sessions;
-    mergeModels(models, opened.perModel(root));
+    const perModel = opened.perModel(root);
+    mergeModels(models, perModel);
+    roots.push({
+      root,
+      total: t.cost,
+      today: opened.today(root),
+      sessions: t.sessions,
+      models: perModel,
+      days: opened.perDay(root),
+      rows: opened.sessionList(root, SESSION_ROW_LIMIT),
+      rowLimit: SESSION_ROW_LIMIT,
+    });
   }
   const top = [...models.values()].sort((a, b) => b.cost - a.cost);
-  bar.show({
+  const snapshot: Snapshot = {
     state: "ok",
     dbPath: opened.dbPath,
     appVersion: opened.appVersion,
     totalCost: total,
     sessions,
     top,
-  });
+  };
+  bar.show(snapshot);
+  if (Panel.current) {
+    Panel.current.update({ snapshot, roots, hidden: bar.hidden });
+  } else {
+    lastData = { snapshot, roots, hidden: bar.hidden };
+  }
+}
+
+function setSnapshot(snapshot: Snapshot): void {
+  bar?.show(snapshot);
+  if (Panel.current) {
+    Panel.current.update({ snapshot, roots: [], hidden: bar?.hidden ?? false });
+  } else {
+    lastData = { snapshot, roots: [], hidden: bar?.hidden ?? false };
+  }
 }
 
 function restartWatcher(): void {
   watcher?.stop();
   watcher = null;
   try {
-    watcher = new DbWatcher(configuredDbPath(), () => refresh());
+    watcher = new DbWatcher(configuredDbPath(), () => void refresh(false));
     watcher.start();
   } catch {
     watcher = null;
   }
 }
 
-function debugInfo(): void {
-  refresh();
+async function debugInfo(): Promise<void> {
+  await refresh(false);
   const channel = ensureOutput();
   channel.clear();
   channel.appendLine(`KiloCost debug — ${configuredDbPath()}`);
+  const d = getDisplay();
+  channel.appendLine(`display currency: ${d.currency}, factor ${d.usdToDisplay}, ${d.note || "USD native"}`);
   if (!db) {
     channel.appendLine("db not available after refresh (missing/locked/drift) — see status bar");
     channel.show(true);
@@ -116,17 +154,15 @@ function debugInfo(): void {
     for (const m of db.perModel(root)) {
       channel.appendLine(`  model ${m.modelId} (${m.providerId ?? "?"})${m.variant ? ` [${m.variant}]` : ""}: ${m.sessions} sessions, ${m.cost.toFixed(6)} USD`);
     }
-    for (const d of db.perDay(root)) {
-      const day = new Date(d.dayUtcStartMs);
-      channel.appendLine(`  day ${day.toISOString().slice(0, 10)}: ${d.sessions} sessions, ${d.cost.toFixed(6)} USD`);
-    }
     const list = db.sessionList(root);
     channel.appendLine(`  session rows fetched: ${list.length}`);
   }
   channel.show(true);
 }
 
+
 export function activate(context: vscode.ExtensionContext): void {
+  ctxRef = context;
   bar = new StatusBar(context);
   context.subscriptions.push({
     dispose: () => {
@@ -137,18 +173,27 @@ export function activate(context: vscode.ExtensionContext): void {
       output?.dispose();
       output = null;
       bar = null;
+      ctxRef = null;
+      Panel.current = null;
     },
   });
   context.subscriptions.push(
-    vscode.commands.registerCommand("kilocost.refresh", () => refresh()),
-    vscode.commands.registerCommand("kilocost.toggleHidden", () => bar?.toggleHidden()),
-    vscode.commands.registerCommand("kilocost.debugInfo", debugInfo),
-    vscode.commands.registerCommand("kilocost.showPanel", () => {
-      void vscode.commands.executeCommand("kilocost.debugInfo");
+    vscode.commands.registerCommand("kilocost.refresh", () => void refresh(true)),
+    vscode.commands.registerCommand("kilocost.toggleHidden", () => {
+      bar?.toggleHidden();
+      if (lastData) {
+        lastData.hidden = bar?.hidden ?? false;
+        if (Panel.current) Panel.current.update(lastData);
+      }
     }),
-    vscode.workspace.onDidChangeWorkspaceFolders(() => refresh()),
+    vscode.commands.registerCommand("kilocost.debugInfo", () => void debugInfo()),
+    vscode.commands.registerCommand("kilocost.showPanel", () => {
+      if (!lastData) void refresh(false);
+      Panel.createOrReveal(context.extensionUri, lastData);
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => void refresh(false)),
   );
-  refresh();
+  void refresh(false);
 }
 
 export function deactivate(): void {

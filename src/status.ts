@@ -1,5 +1,6 @@
 ﻿import * as vscode from "vscode";
 import type { ModelSum } from "./db.js";
+import { getCurrency, getRateNote, money } from "./format.js";
 
 export interface Snapshot {
   state: "missing" | "locked" | "drift" | "ok";
@@ -57,7 +58,7 @@ export class StatusBar {
       return;
     }
     if (snap.state === "ok") {
-      this.item.text = `${ICON} KiloCost: ${usd(snap.totalCost)}`;
+      this.item.text = `${ICON} KiloCost: ${money(snap.totalCost)}`;
       this.item.tooltip = this.tooltipFor(snap);
     } else {
       const label = snap.state === "missing"
@@ -73,21 +74,16 @@ export class StatusBar {
 
   private tooltipFor(snap: Snapshot): vscode.MarkdownString {
     const md = new vscode.MarkdownString();
-    md.appendMarkdown(`**KiloCost** - total: **${usd(snap.totalCost)}** across ${snap.sessions} session(s)\n\n`);
+    md.appendMarkdown(`**KiloCost** - total: **${money(snap.totalCost)}** across ${snap.sessions} session(s)\n\n`);
     for (const m of snap.top.slice(0, 4)) {
       const variant = m.variant ? ` \`${m.variant}\`` : "";
-      md.appendMarkdown(`- ${m.modelId}${variant} (${m.providerId ?? "?"}): ${usd(m.cost)} - ${m.sessions} sessions\n`);
+      md.appendMarkdown(`- ${m.modelId}${variant} (${m.providerId ?? "?"}): ${money(m.cost)} - ${m.sessions} sessions\n`);
     }
     md.appendMarkdown("\nKilo v" + (snap.appVersion ?? "?") + " - click to open breakdown\n");
+    if (getCurrency() !== "USD" || getRateNote()) {
+      const extra = getRateNote() ? getCurrency() + " — " + getRateNote() : getCurrency();
+      md.appendMarkdown("\n\n" + extra);
+    }
     return md;
   }
-}
-
-function usd(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
 }
