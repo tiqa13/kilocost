@@ -1,0 +1,155 @@
+﻿import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import * as vscode from "vscode";
+
+export type OpenResult =
+  | { state: "missing"; dbPath: string; detail: string }
+  | { state: "locked"; dbPath: string; detail: string }
+  | { state: "drift"; dbPath: string; db: DatabaseSync; appVersion: string | null; missing: string[] }
+  | { state: "ok"; dbPath: string; db: DatabaseSync; appVersion: string | null };
+
+const REQUIRED = ["id", "title", "directory", "model", "cost", "time_created", "time_updated", "parent_id"];
+
+export function configuredDbPath(): string {
+  const cfg = vscode.workspace.getConfiguration("kilocost");
+  const override = cfg.get<string>("databasePath", "").trim();
+  const raw = override && override.length > 0
+    ? override
+    : path.join(os.homedir(), ".local", "share", "kilo", "kilo.db");
+  return path.isAbsolute(raw) ? forwardSlash(path.normalize(raw)) : forwardSlash(raw);
+}
+
+export function forwardSlash(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
+export function normalizeRoot(fsPath: string): string {
+  return forwardSlash(fsPath).replace(/\/+$/, "");
+}
+
+function escapeLike(p: string): string {
+  return p.replace(/[%_]/g, (c) => "\\" + c);
+}
+
+function sessionMatchSql(): string {
+  return "directory = ? OR directory LIKE ? ESCAPE '\\'";
+}
+
+function guardColumns(db: DatabaseSync): string[] {
+  const rows = db.prepare("PRAGMA table_info(session)").all() as { name: string }[];
+  const present = new Set(rows.map((r) => r.name));
+  return REQUIRED.filter((c) => !present.has(c));
+}
+
+function readAppVersion(db: DatabaseSync): string | null {
+  try {
+    const r = db
+      .prepare("SELECT version FROM session ORDER BY time_created DESC LIMIT 1")
+      .get() as { version: string | null } | undefined;
+    return r?.version ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function openDb(): OpenResult {
+  const dbPath = configuredDbPath();
+  if (!fs.existsSync(dbPath)) {
+    return { state: "missing", dbPath, detail: `file not found at ${dbPath}` };
+  }
+  try {
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    const missing = guardColumns(db);
+    const appVersion = readAppVersion(db);
+    if (missing.length > 0) {
+      return { state: "drift", dbPath, db, appVersion, missing };
+    }
+    return { state: "ok", dbPath, db, appVersion };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { state: "locked", dbPath, detail };
+  }
+}
+
+export interface DaySum { dayUtcStartMs: number; cost: number; sessions: number }
+export interface ModelSum { modelId: string; providerId: string | null; variant: string | null; cost: number; sessions: number }
+export interface SessionRow {
+  id: string; title: string | null; model: string | null;
+  cost: number | null; tokensInput: number | null; tokensOutput: number | null;
+  timeCreated: number; timeUpdated: number; parent: string | null;
+}
+
+export class KiloDb {
+  constructor(
+    readonly dbPath: string,
+    private readonly db: DatabaseSync,
+    readonly appVersion: string | null,
+  ) {}
+
+  dispose(): void { this.db.close(); }
+
+  private predicateArgs(root: string): [string, string] {
+    return [root, `${escapeLike(root)}/%`];
+  }
+
+  total(root: string): { cost: number; sessions: number } {
+    const [a, b] = this.predicateArgs(root);
+    const sql = `SELECT COALESCE(SUM(cost), 0) AS cost, COUNT(*) AS sessions FROM session WHERE ${sessionMatchSql()}`;
+    const r = this.db.prepare(sql).get(a, b) as { cost: number; sessions: number };
+    return { cost: r.cost ?? 0, sessions: r.sessions ?? 0 };
+  }
+
+  today(root: string): number {
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    const [a, b] = this.predicateArgs(root);
+    const sql = `SELECT COALESCE(SUM(cost), 0) AS cost FROM session WHERE ${sessionMatchSql()} AND time_created >= ?`;
+    const r = this.db.prepare(sql).get(a, b, midnight.getTime()) as { cost: number };
+    return r.cost ?? 0;
+  }
+
+  perModel(root: string): ModelSum[] {
+    const [a, b] = this.predicateArgs(root);
+    const sql = `SELECT model, SUM(COALESCE(cost, 0)) AS cost, COUNT(*) AS sessions
+      FROM session WHERE ${sessionMatchSql()} GROUP BY model ORDER BY cost DESC`;
+    const rows = this.db.prepare(sql).all(a, b) as { model: string | null; cost: number; sessions: number }[];
+    return rows.map((r) => {
+      const parsed = parseModel(r.model);
+      return { ...parsed, cost: r.cost ?? 0, sessions: r.sessions ?? 0 };
+    });
+  }
+
+  perDay(root: string): DaySum[] {
+    const [a, b] = this.predicateArgs(root);
+    const sql = `SELECT CAST(time_created / 86400000 AS INTEGER) * 86400000 AS dayUtcStartMs,
+        SUM(COALESCE(cost, 0)) AS cost, COUNT(*) AS sessions
+      FROM session WHERE ${sessionMatchSql()}
+      GROUP BY dayUtcStartMs ORDER BY dayUtcStartMs DESC LIMIT 45`;
+    const rows = this.db.prepare(sql).all(a, b) as { dayUtcStartMs: number; cost: number; sessions: number }[];
+    return rows.map((r) => ({ dayUtcStartMs: r.dayUtcStartMs, cost: r.cost ?? 0, sessions: r.sessions ?? 0 }));
+  }
+
+  sessionList(root: string, limit = 200): SessionRow[] {
+    const [a, b] = this.predicateArgs(root);
+    const sql = `SELECT id, title, model, cost, tokens_input AS tokensInput, tokens_output AS tokensOutput,
+        time_created AS timeCreated, time_updated AS timeUpdated, parent_id AS parent
+      FROM session WHERE ${sessionMatchSql()} ORDER BY time_updated DESC LIMIT ?`;
+    return this.db.prepare(sql).all(a, b, limit) as unknown as SessionRow[];
+  }
+}
+
+function parseModel(raw: string | null): { modelId: string; providerId: string | null; variant: string | null } {
+  if (!raw) return { modelId: "unknown", providerId: null, variant: null };
+  try {
+    const obj = JSON.parse(raw) as { id?: string; providerID?: string; variant?: string };
+    return {
+      modelId: obj.id ?? "unknown",
+      providerId: obj.providerID ?? null,
+      variant: obj.variant && obj.variant.length > 0 ? obj.variant : null,
+    };
+  } catch {
+    return { modelId: raw, providerId: null, variant: null };
+  }
+}
