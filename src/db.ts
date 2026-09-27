@@ -87,6 +87,17 @@ export interface SessionRow {
   timeCreated: number; timeUpdated: number; parent: string | null;
 }
 
+export interface TokenAggRow {
+  sid?: string;
+  providerId: string | null;
+  modelId: string | null;
+  tokensInput: number;
+  tokensOutput: number;
+  tokensReasoning: number;
+  tokensCacheRead: number;
+  tokensCacheWrite: number;
+  storedCost: number;
+}
 export class KiloDb {
   constructor(
     readonly dbPath: string,
@@ -137,6 +148,37 @@ export class KiloDb {
     return rows.map((r) => ({ dayUtcStartMs: r.dayUtcStartMs, cost: r.cost ?? 0, sessions: r.sessions ?? 0 }));
   }
 
+  modelTokenSums(root: string): TokenAggRow[] {
+    return this.tokenAgg(root, false);
+  }
+
+  sessionTokenSums(root: string): TokenAggRow[] {
+    return this.tokenAgg(root, true);
+  }
+
+  private tokenAgg(root: string, bySession: boolean): TokenAggRow[] {
+    const [a, b] = this.predicateArgs(root);
+    const sidCol = bySession ? "s.id AS sid," : "";
+    const sql = `SELECT ${sidCol} json_extract(m.data, '$.providerID') AS providerId,
+        json_extract(m.data, '$.modelID') AS modelId,
+        SUM(COALESCE(json_extract(p.data, '$."tokens"."input"'), 0)) AS tokensInput,
+        SUM(COALESCE(json_extract(p.data, '$."tokens"."output"'), 0)) AS tokensOutput,
+        SUM(COALESCE(json_extract(p.data, '$."tokens"."reasoning"'), 0)) AS tokensReasoning,
+        SUM(COALESCE(json_extract(p.data, '$."tokens"."cache"."read"'), 0)) AS tokensCacheRead,
+        SUM(COALESCE(json_extract(p.data, '$."tokens"."cache"."write"'), 0)) AS tokensCacheWrite,
+        SUM(COALESCE(json_extract(p.data, '$.cost'), 0)) AS storedCost
+      FROM part p
+      JOIN message m ON m.id = p.message_id
+      JOIN session s ON s.id = p.session_id
+      WHERE ${sessionMatchSql()}
+        AND json_extract(p.data, '$."type"') = 'step-finish'
+      GROUP BY ${bySession ? "s.id" : ""}providerId, modelId`;;
+    try {
+      return this.db.prepare(sql).all(a, b) as unknown as TokenAggRow[];
+    } catch {
+      return [];
+    }
+  }
   sessionList(root: string, limit = 200): SessionRow[] {
     const [a, b] = this.predicateArgs(root);
     try {
