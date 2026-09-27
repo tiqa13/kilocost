@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "kilocost",
   "displayName": "KiloCost",
   "description": "Total token cost per project for Kilo Code sessions, straight from the local session database.",
