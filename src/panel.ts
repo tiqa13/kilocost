@@ -1,8 +1,8 @@
 ﻿import * as vscode from "vscode";
 import type { DaySum, ModelSum, SessionRow } from "./db.js";
 import type { Snapshot } from "./status.js";
-import type { TypeCosts } from "./costs.js";
-import { getCurrency, getRateNote, money } from "./format.js";
+import type { TokenTotals, TypeCosts } from "./costs.js";
+import { compact, getCurrency, getRateNote, money } from "./format.js";
 
 export interface RootData {
   root: string;
@@ -15,6 +15,8 @@ export interface RootData {
   rowLimit: number;
   /** per-token-type derived costs for this root (USD basis). */
   typeCosts: TypeCosts | null;
+  /** total token counts per type for this root. */
+  tokens?: TokenTotals | null;
   /** derived costs per session id for the sessions table. */
   sessionTypeCosts?: Map<string, TypeCosts>;
   /** "provider/model" -> human readable price line. */
@@ -40,11 +42,7 @@ function dayLabel(dayUtcStartMs: number): string {
 }
 
 function num(n: number | null): string {
-  if (n === null) return "–";
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-  if (n >= 10_000) return (n / 1_000).toFixed(0) + "k";
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + "k";
-  return String(n);
+  return n === null ? "–" : compact(n);
 }
 
 function ts(ms: number): string {
@@ -142,6 +140,10 @@ function buildHtml(data: PanelData): string {
   parts.push(`<div class="box"><span class="v">${esc(money(s.totalCost))}</span><br>project total<br>${s.sessions} sessions</div>`);
   const todaySum = data.roots.reduce((acc, r) => acc + r.today, 0);
   parts.push(`<div class="box"><span class="v">${esc(money(todaySum))}</span><br>today</div>`);
+  if (s.tokens) {
+    const tokTotal = s.tokens.input + s.tokens.output + s.tokens.reasoning + s.tokens.cacheRead + s.tokens.cacheWrite;
+    parts.push(`<div class="box"><span class="v">${esc(compact(tokTotal))}</span><br>total tokens<br>${esc(compact(s.tokens.input))} in · ${esc(compact(s.tokens.output + s.tokens.reasoning))} out · ${esc(compact(s.tokens.cacheRead + s.tokens.cacheWrite))} cache</div>`);
+  }
   parts.push("</div>");
   parts.push(`<p class="muted">Kilo v${esc(s.appVersion ?? "?")} · ${esc(s.dbPath)} · read-only</p>`);
   if (getCurrency() !== "USD" || getRateNote()) {
@@ -167,23 +169,29 @@ function buildHtml(data: PanelData): string {
 function typeCostTable(r: RootData): string {
   const c = r.typeCosts;
   if (!c) return "";
-  const row = (label: string, v: number): string => `<tr><td>${esc(label)}</td><td class="num">${esc(money(v))}</td></tr>`;
+  const t = r.tokens;
+  const tokCell = (v: number | undefined): string => `<td class="num">${v === undefined ? "" : compact(v)}</td>`;
+  const row = (label: string, tokens: number | undefined, v: number): string =>
+    `<tr><td>${esc(label)}</td>${tokCell(tokens)}<td class="num">${esc(money(v))}</td></tr>`;
   const knownSum = c.input + c.output + c.reasoning + c.cacheRead + c.cacheWrite;
   const rows = [
-    row("Input", c.input),
-    row("Output", c.output),
-    row("Reasoning", c.reasoning),
-    row("Cache read", c.cacheRead),
-    row("Cache write", c.cacheWrite),
+    row("Input", t?.input, c.input),
+    row("Output", t?.output, c.output),
+    row("Reasoning", t?.reasoning, c.reasoning),
+    row("Cache read", t?.cacheRead, c.cacheRead),
+    row("Cache write", t?.cacheWrite, c.cacheWrite),
   ];
-  if (c.unknown > 0.000001) rows.push(row("Unknown pricing", c.unknown));
+  if (c.unknown > 0.000001) rows.push(row("Unknown pricing", undefined, c.unknown));
   const residual = r.total - knownSum - c.unknown;
-  if (Math.abs(residual) > 0.000001) rows.push(row("Residual (stored vs derived)", residual));
-  rows.push(row("Total", knownSum + c.unknown + (residual > 0.000001 ? residual : 0)));
+  if (Math.abs(residual) > 0.000001) rows.push(row("Residual (stored vs derived)", undefined, residual));
+  const totalTokens = t
+    ? t.input + t.output + t.reasoning + t.cacheRead + t.cacheWrite
+    : undefined;
+  rows.push(row("Total", totalTokens, knownSum + c.unknown + (residual > 0.000001 ? residual : 0)));
   const unpricedNote = c.unpriced.length > 0
     ? `<p class="muted">No local pricing for: ${esc(c.unpriced.slice(0, 8).join(", "))}${c.unpriced.length > 8 ? " \u00b7 " + (c.unpriced.length - 8) + " more" : ""}. Add \"cost\" blocks in ~/.config/kilo/kilo.jsonc.</p>`
     : "";
-  return `<h3>Cost per token type</h3><table><tr><th>Type</th><th class="num">Cost</th></tr>${rows.join("")}</table>${unpricedNote}`;
+  return `<h3>Cost per token type</h3><table><tr><th>Type</th><th class="num">Tokens</th><th class="num">Cost</th></tr>${rows.join("")}</table>${unpricedNote}`;
 }
 function modelTable(models: ModelSum[]): string {
   if (models.length === 0) return "";

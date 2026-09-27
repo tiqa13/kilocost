@@ -13,7 +13,37 @@ export interface TypeCosts {
   unpriced: string[];
 }
 
+export interface TokenTotals {
+  input: number;
+  output: number;
+  reasoning: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
 const per1m = (tokens: number, price: number): number => (tokens * price) / 1_000_000;
+
+export function computeTokenTotals(rows: TokenAggRow[]): TokenTotals {
+  const t: TokenTotals = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 };
+  for (const r of rows) {
+    t.input += r.tokensInput;
+    t.output += r.tokensOutput;
+    t.reasoning += r.tokensReasoning;
+    t.cacheRead += r.tokensCacheRead;
+    t.cacheWrite += r.tokensCacheWrite;
+  }
+  return t;
+}
+
+export function mergeTokenTotals(a: TokenTotals, b: TokenTotals): TokenTotals {
+  return {
+    input: a.input + b.input,
+    output: a.output + b.output,
+    reasoning: a.reasoning + b.reasoning,
+    cacheRead: a.cacheRead + b.cacheRead,
+    cacheWrite: a.cacheWrite + b.cacheWrite,
+  };
+}
 
 /**
  * Splits stored per-step costs into token-type buckets.

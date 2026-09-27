@@ -5,7 +5,7 @@ import { Panel, PanelData, RootData } from "./panel.js";
 import { ensureRates } from "./rates.js";
 import { getDisplay, setDisplay } from "./format.js";
 import { loadPricing } from "./pricing.js";
-import { computeTypeCosts, mergeTypeCosts, TypeCosts } from "./costs.js";
+import { computeTokenTotals, computeTypeCosts, mergeTokenTotals, mergeTypeCosts, TokenTotals, TypeCosts } from "./costs.js";
 import { Snapshot, StatusBar } from "./status.js";
 
 let ctxRef: vscode.ExtensionContext | null = null;
@@ -83,6 +83,7 @@ async function refresh(force: boolean): Promise<void> {
   const roots: RootData[] = [];
   const pricing = loadPricing();
   let mergedCosts: TypeCosts = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, unknown: 0, unpriced: [] };
+  let mergedTokens: TokenTotals = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 };
   for (const root of folderRoots()) {
     const t = opened.total(root);
     total += t.cost;
@@ -92,6 +93,8 @@ async function refresh(force: boolean): Promise<void> {
     const tokenRows = opened.modelTokenSums(root);
     const typeCosts = computeTypeCosts(tokenRows, pricing);
     mergedCosts = mergeTypeCosts(mergedCosts, typeCosts);
+    const tokens = computeTokenTotals(tokenRows);
+    mergedTokens = mergeTokenTotals(mergedTokens, tokens);
     const sessionTypeCosts = new Map<string, TypeCosts>();
     const bySid = new Map<string, TokenAggRow[]>();
     for (const r of opened.sessionTokenSums(root)) {
@@ -113,6 +116,7 @@ async function refresh(force: boolean): Promise<void> {
       rows: opened.sessionList(root, SESSION_ROW_LIMIT),
       rowLimit: SESSION_ROW_LIMIT,
       typeCosts,
+      tokens,
       sessionTypeCosts,
     });
   }
@@ -125,6 +129,7 @@ async function refresh(force: boolean): Promise<void> {
     sessions,
     top,
     typeCosts: mergedCosts,
+    tokens: mergedTokens,
   };
   bar.show(snapshot);
   if (Panel.current) {

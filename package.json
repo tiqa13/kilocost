@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "kilocost",
   "displayName": "KiloCost",
   "description": "Total token cost per project for Kilo Code sessions, straight from the local session database.",
@@ -7,7 +7,7 @@
   "license": "GPL-3.0-only",
   "repository": {
     "type": "git",
-    "url": "https://github.com/unsloth-hub/kilocost.git"
+    "url": "https://github.com/tiqa13/kilocost.git"
   },
   "engines": {
     "vscode": "^1.138.0"
@@ -31,22 +31,22 @@
     "commands": [
       {
         "command": "kilocost.showPanel",
-        "title": "Open Breakdown Panel",
+        "title": "KiloCost: Open Breakdown Panel",
         "category": "KiloCost"
       },
       {
         "command": "kilocost.refresh",
-        "title": "Refresh Costs",
+        "title": "KiloCost: Refresh Costs",
         "category": "KiloCost"
       },
       {
         "command": "kilocost.toggleHidden",
-        "title": "Toggle Hidden",
+        "title": "KiloCost: Toggle Hidden",
         "category": "KiloCost"
       },
       {
         "command": "kilocost.debugInfo",
-        "title": "Debug Info",
+        "title": "KiloCost: Debug Info",
         "category": "KiloCost"
       }
     ],

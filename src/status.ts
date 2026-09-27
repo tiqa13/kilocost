@@ -1,7 +1,7 @@
 ﻿import * as vscode from "vscode";
 import type { ModelSum } from "./db.js";
-import type { TypeCosts } from "./costs.js";
-import { getCurrency, getRateNote, money } from "./format.js";
+import type { TokenTotals, TypeCosts } from "./costs.js";
+import { compact, getCurrency, getRateNote, money } from "./format.js";
 
 export interface Snapshot {
   state: "missing" | "locked" | "drift" | "ok";
@@ -12,6 +12,7 @@ export interface Snapshot {
   detail?: string;
   top: ModelSum[];
   typeCosts?: TypeCosts;
+  tokens?: TokenTotals;
 }
 
 const ICON = "$(credit-card)";
@@ -92,6 +93,13 @@ export class StatusBar {
       ];
       if (tc.unknown > 0) parts.push("unknown " + money(tc.unknown));
       md.appendMarkdown("\n\nPer token type: " + parts.join(" \u00b7 "));
+    }
+    const tk = snap.tokens;
+    if (tk) {
+      md.appendMarkdown(
+        "\nTokens: " + compact(tk.input) + " in \u00b7 " + compact(tk.output) + " out \u00b7 " +
+        compact(tk.reasoning) + " reasoning \u00b7 " + compact(tk.cacheRead + tk.cacheWrite) + " cache",
+      );
     }
     if (getCurrency() !== "USD" || getRateNote()) {
       const extra = getRateNote() ? getCurrency() + " — " + getRateNote() : getCurrency();

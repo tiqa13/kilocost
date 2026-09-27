@@ -48,3 +48,11 @@ export function getRateNote(): string {
 export function money(usdValue: number): string {
   return formatter.format(usdValue * usdToDisplay);
 }
+
+/** Compact token amount, e.g. 12.4M, 340k. */
+export function compact(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 10_000) return (n / 1_000).toFixed(0) + "k";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "k";
+  return String(Math.round(n));
+}

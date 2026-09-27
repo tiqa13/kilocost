@@ -4,3 +4,9 @@ dist/
 .vscode-test/
 .env
 *.sqlite
+
+# internal planning docs (kept local, out of GitHub)
+PLAN.md
+DECISIONS.md
+DATA_MODEL.md
+CHANGELOG.md
