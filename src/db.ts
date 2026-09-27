@@ -34,7 +34,11 @@ function escapeLike(p: string): string {
 }
 
 function sessionMatchSql(): string {
-  return "directory = ? OR directory LIKE ? ESCAPE '\\'";
+  // VS Code reports Windows drive roots with a lowercase drive letter while
+  // Kilo stores the session cwd with the drive's original case; the Windows
+  // filesystem is case-insensitive, so match case-insensitively there.
+  const eq = process.platform === "win32" ? "directory = ? COLLATE NOCASE" : "directory = ?";
+  return `${eq} OR directory LIKE ? ESCAPE '\\'`;
 }
 
 function guardColumns(db: DatabaseSync): string[] {
@@ -77,7 +81,9 @@ export interface DaySum { dayUtcStartMs: number; cost: number; sessions: number 
 export interface ModelSum { modelId: string; providerId: string | null; variant: string | null; cost: number; sessions: number }
 export interface SessionRow {
   id: string; title: string | null; model: string | null;
-  cost: number | null; tokensInput: number | null; tokensOutput: number | null;
+  cost: number | null;
+  tokensInput: number | null; tokensOutput: number | null; tokensReasoning: number | null;
+  tokensCacheRead: number | null; tokensCacheWrite: number | null;
   timeCreated: number; timeUpdated: number; parent: string | null;
 }
 
@@ -133,13 +139,33 @@ export class KiloDb {
 
   sessionList(root: string, limit = 200): SessionRow[] {
     const [a, b] = this.predicateArgs(root);
+    try {
+      return this.sessionListFull(a, b, limit);
+    } catch {
+      return this.sessionListFallback(a, b, limit);
+    }
+  }
+
+  private sessionListFull(a: string, b: string, limit: number): SessionRow[] {
     const sql = `SELECT id, title, model, cost, tokens_input AS tokensInput, tokens_output AS tokensOutput,
+        tokens_reasoning AS tokensReasoning, tokens_cache_read AS tokensCacheRead, tokens_cache_write AS tokensCacheWrite,
         time_created AS timeCreated, time_updated AS timeUpdated, parent_id AS parent
       FROM session WHERE ${sessionMatchSql()} ORDER BY time_updated DESC LIMIT ?`;
     return this.db.prepare(sql).all(a, b, limit) as unknown as SessionRow[];
   }
+  private sessionListFallback(a: string, b: string, limit: number): SessionRow[] {
+    const sql = `SELECT id, title, model, cost, time_created AS timeCreated, time_updated AS timeUpdated, parent_id AS parent
+      FROM session WHERE ${sessionMatchSql()} ORDER BY time_updated DESC LIMIT ?`;
+    const rows = this.db.prepare(sql).all(a, b, limit) as unknown as {
+      id: string; title: string | null; model: string | null; cost: number | null;
+      timeCreated: number; timeUpdated: number; parent: string | null;
+    }[];
+    return rows.map((r) => ({
+      ...r,
+      tokensInput: null, tokensOutput: null, tokensReasoning: null, tokensCacheRead: null, tokensCacheWrite: null,
+    }));
+  }
 }
-
 function parseModel(raw: string | null): { modelId: string; providerId: string | null; variant: string | null } {
   if (!raw) return { modelId: "unknown", providerId: null, variant: null };
   try {

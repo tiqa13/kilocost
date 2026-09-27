@@ -32,6 +32,14 @@ function dayLabel(dayUtcStartMs: number): string {
   return new Date(dayUtcStartMs).toLocaleDateString("en-GB");
 }
 
+function num(n: number | null): string {
+  if (n === null) return "–";
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 10_000) return (n / 1_000).toFixed(0) + "k";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "k";
+  return String(n);
+}
+
 function ts(ms: number): string {
   return new Date(ms).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" });
 }
@@ -169,10 +177,14 @@ function sessionTable(rows: SessionRow[], limit: number): string {
   const body = rows.map((r) => {
     const title = esc(r.title ?? r.id);
     const parent = r.parent ? " ↩" : "";
-    return `<tr><td>${title}${parent}<br><span class="muted">${ts(r.timeCreated)} → ${ts(r.timeUpdated)}</span></td>` +
-      `<td class="num">${esc(money(r.cost ?? 0))}</td>` +
-      `<td class="num">${r.tokensInput ?? 0} / ${r.tokensOutput ?? 0}</td></tr>`;
+    const cache = (r.tokensCacheRead ?? 0) + (r.tokensCacheWrite ?? 0);
+    return `<tr><td>${title}${parent}<br><span class="muted">${ts(r.timeCreated)} → ${ts(r.timeUpdated)}</span></td>`
+      + `<td class="num">${esc(money(r.cost ?? 0))}</td>`
+      + `<td class="num">${num(r.tokensInput)}</td>`
+      + `<td class="num">${num(r.tokensOutput)}</td>`
+      + `<td class="num">${num(r.tokensReasoning)}</td>`
+      + `<td class="num">${r.tokensCacheRead === null ? "–" : num(cache)}</td></tr>`;
   }).join("");
   const note = rows.length >= limit ? `<p class="muted">Showing newest ${limit} sessions.</p>` : "";
-  return `<h3>Sessions</h3><table><tr><th>Session</th><th class="num">Cost</th><th class="num">In / Out tokens</th></tr>${body}</table>${note}`;
+  return `<h3>Sessions</h3><table><tr><th>Session</th><th class="num">Cost</th><th class="num">In</th><th class="num">Out</th><th class="num">Reasoning</th><th class="num">Cache</th></tr>${body}</table>${note}`;
 }
