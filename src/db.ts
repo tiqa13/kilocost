@@ -172,7 +172,7 @@ export class KiloDb {
       JOIN session s ON s.id = p.session_id
       WHERE ${sessionMatchSql()}
         AND json_extract(p.data, '$."type"') = 'step-finish'
-      GROUP BY ${bySession ? "s.id" : ""}providerId, modelId`;;
+      GROUP BY ${bySession ? "s.id, " : ""}providerId, modelId`;
     try {
       return this.db.prepare(sql).all(a, b) as unknown as TokenAggRow[];
     } catch {

@@ -1,9 +1,11 @@
 ﻿import * as vscode from "vscode";
-import { KiloDb, ModelSum, OpenResult, openDb, configuredDbPath } from "./db.js";
+import { KiloDb, ModelSum, OpenResult, TokenAggRow, openDb, configuredDbPath } from "./db.js";
 import { DbWatcher } from "./refresh.js";
 import { Panel, PanelData, RootData } from "./panel.js";
 import { ensureRates } from "./rates.js";
 import { getDisplay, setDisplay } from "./format.js";
+import { loadPricing } from "./pricing.js";
+import { computeTypeCosts, mergeTypeCosts, TypeCosts } from "./costs.js";
 import { Snapshot, StatusBar } from "./status.js";
 
 let ctxRef: vscode.ExtensionContext | null = null;
@@ -79,12 +81,28 @@ async function refresh(force: boolean): Promise<void> {
   let sessions = 0;
   const models = new Map<string, ModelSum>();
   const roots: RootData[] = [];
+  const pricing = loadPricing();
+  let mergedCosts: TypeCosts = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, unknown: 0, unpriced: [] };
   for (const root of folderRoots()) {
     const t = opened.total(root);
     total += t.cost;
     sessions += t.sessions;
     const perModel = opened.perModel(root);
     mergeModels(models, perModel);
+    const tokenRows = opened.modelTokenSums(root);
+    const typeCosts = computeTypeCosts(tokenRows, pricing);
+    mergedCosts = mergeTypeCosts(mergedCosts, typeCosts);
+    const sessionTypeCosts = new Map<string, TypeCosts>();
+    const bySid = new Map<string, TokenAggRow[]>();
+    for (const r of opened.sessionTokenSums(root)) {
+      if (!r.sid) continue;
+      const arr = bySid.get(r.sid) ?? [];
+      arr.push(r);
+      bySid.set(r.sid, arr);
+    }
+    for (const [sid, arr] of bySid) {
+      sessionTypeCosts.set(sid, computeTypeCosts(arr, pricing));
+    }
     roots.push({
       root,
       total: t.cost,
@@ -94,6 +112,8 @@ async function refresh(force: boolean): Promise<void> {
       days: opened.perDay(root),
       rows: opened.sessionList(root, SESSION_ROW_LIMIT),
       rowLimit: SESSION_ROW_LIMIT,
+      typeCosts,
+      sessionTypeCosts,
     });
   }
   const top = [...models.values()].sort((a, b) => b.cost - a.cost);
@@ -104,6 +124,7 @@ async function refresh(force: boolean): Promise<void> {
     totalCost: total,
     sessions,
     top,
+    typeCosts: mergedCosts,
   };
   bar.show(snapshot);
   if (Panel.current) {

@@ -16,6 +16,14 @@ function stripJsonComments(src: string): string {
   let inString = false;
   let escaped = false;
   let i = 0;
+  const trimComma = (c: string): void => {
+    // trailing commas: drop a comma directly before } or ]
+    while (out.length > 0 && /[ \t\r\n]/.test(out[out.length - 1])) {
+      out = out.slice(0, -1);
+    }
+    if (out.length > 0 && out[out.length - 1] === ",") out = out.slice(0, -1);
+    out += c;
+  };
   while (i < src.length) {
     const c = src[i];
     const c2 = src[i + 1];
@@ -37,6 +45,17 @@ function stripJsonComments(src: string): string {
       while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
       i += 2;
       continue;
+    }
+    if (c === "}" || c === "]") {
+      let j = out.length - 1;
+      while (j >= 0 && /[ \t\r\n]/.test(out[j])) j--; // trailing ws before closer
+      const last = j >= 0 ? out[j] : "";
+      if (last === ",") {
+        out = out.slice(0, j).replace(/[ \t\r\n]+$/, "");
+        out += c;
+        i++;
+        continue;
+      }
     }
     out += c;
     i++;

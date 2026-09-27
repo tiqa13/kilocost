@@ -1,5 +1,6 @@
 ﻿import * as vscode from "vscode";
 import type { ModelSum } from "./db.js";
+import type { TypeCosts } from "./costs.js";
 import { getCurrency, getRateNote, money } from "./format.js";
 
 export interface Snapshot {
@@ -10,6 +11,7 @@ export interface Snapshot {
   appVersion?: string | null;
   detail?: string;
   top: ModelSum[];
+  typeCosts?: TypeCosts;
 }
 
 const ICON = "$(credit-card)";
@@ -80,6 +82,17 @@ export class StatusBar {
       md.appendMarkdown(`- ${m.modelId}${variant} (${m.providerId ?? "?"}): ${money(m.cost)} - ${m.sessions} sessions\n`);
     }
     md.appendMarkdown("\nKilo v" + (snap.appVersion ?? "?") + " - click to open breakdown\n");
+    const tc = snap.typeCosts;
+    if (tc && (tc.input > 0 || tc.unknown > 0 || tc.output > 0)) {
+      const parts = [
+        "in " + money(tc.input),
+        "out " + money(tc.output),
+        "reason " + money(tc.reasoning),
+        "cache " + money(tc.cacheRead + tc.cacheWrite),
+      ];
+      if (tc.unknown > 0) parts.push("unknown " + money(tc.unknown));
+      md.appendMarkdown("\n\nPer token type: " + parts.join(" \u00b7 "));
+    }
     if (getCurrency() !== "USD" || getRateNote()) {
       const extra = getRateNote() ? getCurrency() + " — " + getRateNote() : getCurrency();
       md.appendMarkdown("\n\n" + extra);
